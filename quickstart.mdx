@@ -95,27 +95,27 @@ This guide walks you through standing up a local Selenite instance on your own m
 
     On a successful start you will see output similar to the following, listing every address the server is bound to:
 
-    ```
+    ```text
     Listening on:
-        http://localhost:8080
-        http://myhostname:8080
-        http://0.0.0.0:8080
+    	http://localhost:8080
+    	http://myhostname:8080
+    	http://0.0.0.0:8080
     ```
 
     The server binds to all interfaces (`0.0.0.0`) by default so it is reachable from other machines on your network as well as locally.
   </Step>
 
-  <Step title="Open the Proxy in Chromium">
-    Navigate to `http://localhost:8080` in a **Chromium-based browser**.
+  <Step title="Open the Proxy in Your Browser">
+    Navigate to `http://localhost:8080` in any modern browser.
 
     If you configured a password for `localhost` in `src/api/some.pass`, the page will prompt you for it. Once authenticated, the Ultraviolet proxy interface loads and you can start browsing through the proxy.
 
     <Tip>
-      Always use a Chromium-based browser (Chrome, Edge, Brave, etc.) for localhost testing. Chromium permits service worker registration over plain HTTP on `localhost`, so the Ultraviolet service worker registers without issue. Firefox works correctly once you deploy to a domain with a valid SSL certificate, but it will not register the service worker over `http://localhost`.
+      Both Chromium and Firefox support service worker registration over plain HTTP on `localhost` and `127.0.0.1` — these hostnames are explicitly allowed in `public/register-sw.js` via the `swAllowedHostnames` list. You do not need HTTPS for local development on either browser.
     </Tip>
 
     <Note>
-      Firefox requires HTTPS for service worker registration on any hostname other than the explicitly allowed `localhost` and `127.0.0.1`. Until you deploy Selenite behind a TLS-terminating reverse proxy with a valid certificate, Firefox users will see a non-functional proxy page.
+      Firefox requires HTTPS for service worker registration on any hostname **other than** `localhost` and `127.0.0.1`. Once you deploy Selenite to a public domain, provision a valid TLS certificate before sharing the URL — without it, Firefox users will see a non-functional proxy page.
     </Note>
   </Step>
 

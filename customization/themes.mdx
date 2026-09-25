@@ -13,15 +13,15 @@ The **Settings** page at `/settings.html` exposes every built-in theme as a styl
 Themes with background images have a paired **Background** checkbox (`#bgTheme`). When the checkbox is unchecked, the `false`-suffixed variant (e.g. `sunsetfalse`) is selected instead — the colours stay the same but the background image is omitted.
 
 ```js
-// themes.js — loaded on every page before <body> renders
+// themes.js — loaded synchronously in the <head> of settings.html;
+// loaded with defer on index.html
 document.addEventListener("DOMContentLoaded", () => {
   if (localStorage.getItem("selenite.theme")) {
     document.body.setAttribute("theme", localStorage.getItem("selenite.theme"));
   } else {
     document.body.setAttribute("theme", "main");
   }
-});
-
+})
 function setTheme(theme) {
   localStorage.setItem("selenite.theme", theme);
   document.body.setAttribute("theme", theme);
@@ -65,13 +65,13 @@ These themes use a flat colour for `--bg` and do not have a background-image var
 | `dark` | dark mode | `#0c0c0c` near-black | `#242424` |
 | `egamepass` | e-gamepass | `#16416f` blue | `#185494` |
 | `cools1te` | cools1te | `#8e14af` purple/lavender | `#ab28cf` |
-| `threekho` | 3kh0 | `#000000` black | `#111111` green-tinted |
+| `threekho` | 3kh0 | `#000000` black | `#111111` near-black |
 
 ### Background-image themes
 
-Each of these ships with a full-page background image. The Settings page checkbox controls whether you get the image (`theme`) or the flat-colour fallback (`themefalse`).
+Each of these ships with a full-page background image. The Settings page checkbox controls whether you get the image (`theme`) or the flat-colour fallback (`themefalse`). The table shows the `--bg` value used by the no-image (`false`) variant.
 
-| Theme key | Display name | Fallback `--bg` | Notes |
+| Theme key | Display name | Solid (`themefalse`) `--bg` | Notes |
 |---|---|---|---|
 | `sunset` / `sunsetfalse` | sunset | `rgb(59, 67, 78)` blue-grey | wallhaven.cc/w/jxl3qp |
 | `mountains` / `mountainsfalse` | mountains | `#bf7483` dusty rose | wallhaven.cc/w/l82kpr |

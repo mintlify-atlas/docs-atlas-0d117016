@@ -1,5 +1,5 @@
 ---
-title: "Ultraviolet Configuration Reference"
+title: "Ultraviolet uv.config.js Field Reference for Selenite"
 sidebarTitle: "UV Config"
 description: "Every field in public/purple/uv.config.js explained — prefix, XOR codec, handler, client, bundle, config self-reference, and sw paths."
 ---
@@ -88,8 +88,6 @@ Ultraviolet ships multiple built-in codecs. The default in Selenite is XOR:
 | Codec | Encode | Decode | Notes |
 |---|---|---|---|
 | XOR | `Ultraviolet.codec.xor.encode` | `Ultraviolet.codec.xor.decode` | Default. Obfuscates URLs in the address bar. |
-| Plain | `Ultraviolet.codec.plain.encode` | `Ultraviolet.codec.plain.decode` | No obfuscation — target URLs appear verbatim. |
-| Base64 | `Ultraviolet.codec.base64.encode` | `Ultraviolet.codec.base64.decode` | Base64-encodes the target URL. |
 
 <Warning>
   Changing `prefix` or the codec pair (`encodeUrl`/`decodeUrl`) requires coordinated updates in at least two places:

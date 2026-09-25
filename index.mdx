@@ -1,12 +1,12 @@
 ---
 title: "Selenite: Self-Hosted Web Proxy Powered by Ultraviolet"
-sidebarTitle: "Introduction"
-description: "Selenite is a deployable web proxy built on Ultraviolet and service workers. Bypass internet censorship and access blocked sites with a themeable, password-protected frontend."
+sidebarTitle: "Overview"
+description: "Deploy Selenite to bypass internet censorship with a service-worker proxy built on Ultraviolet — password-protected and fully themeable."
 ---
 
 Selenite is a self-hosted web proxy built on top of [Ultraviolet](https://github.com/titaniumnetwork-dev/Ultraviolet) by TitaniumNetwork. It runs entirely in the browser using service workers and an encrypted WebSocket transport, letting users browse the open web from behind restrictive networks — with no client-side software required.
 
-Deploy it to any Node.js host in minutes, protect access with per-domain passwords, and customise the look with 16+ built-in themes.
+Deploy it to any Node.js host in minutes, protect access with per-domain passwords, and customise the look with 16 built-in themes.
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="bolt" href="/quickstart">
@@ -37,7 +37,7 @@ Selenite intercepts browser requests through a registered service worker and tun
   <Card title="Password Protection" icon="key">
     Per-domain password gating keeps your instance private and access-controlled
   </Card>
-  <Card title="16+ Themes" icon="palette">
+  <Card title="16 Themes" icon="palette">
     Switch between Selenite, Catppuccin, vaporwave, mountains, and more from the Settings page
   </Card>
   <Card title="One-Click Deploy" icon="rocket">
@@ -52,19 +52,40 @@ Selenite intercepts browser requests through a registered service worker and tun
 
 <Steps>
   <Step title="Clone and install">
-    Clone the repository and install Node.js dependencies with npm.
+    Clone the repository and install Node.js dependencies with npm. There is no separate build step.
+
+    ```bash
+    git clone https://github.com/selenite-cc/proxy.git
+    cd proxy
+    npm install
+    ```
   </Step>
   <Step title="Create a password file">
-    Create `src/api/some.pass` with a JSON object mapping your domain to a password.
+    Create `src/api/some.pass` with a JSON object mapping each domain to its password. Both `addPass.cjs` and `verify.cjs` read this file from `src/api/some.pass`.
+
+    ```json
+    {
+      "yourdomain.example": "your-secret-password"
+    }
+    ```
   </Step>
   <Step title="Set the environment variable">
-    Copy `.env.example` to `.env` and set `ADD_LINK_PASS` for the management API.
+    Copy `.env.example` to `.env` and set `ADD_LINK_PASS` to the secret used to authorise calls to the `/api/addLink` management endpoint.
+
+    ```bash
+    cp .env.example .env
+    # Edit .env and set ADD_LINK_PASS=your-api-secret
+    ```
   </Step>
   <Step title="Start the server">
-    Run `npm start` and open `http://localhost:8080` in a Chromium browser.
+    Run `npm start` to launch the server, then open `http://localhost:8080` in a Chromium-based browser.
+
+    ```bash
+    npm start
+    ```
   </Step>
 </Steps>
 
 <Note>
-  Firefox requires a valid SSL certificate to run service workers. Use a Chromium-based browser when testing on `localhost`.
+  Service workers require HTTPS on any hostname other than `localhost` or `127.0.0.1`. When testing locally those two hostnames are explicitly allowed over plain HTTP, so any modern browser — including Firefox — will work. For any other domain you must serve Selenite over HTTPS.
 </Note>

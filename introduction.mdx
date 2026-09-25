@@ -44,7 +44,7 @@ When a visitor opens Selenite in their browser, the following pipeline runs:
     Access is controlled by a domain-scoped password file (`src/api/some.pass`) that is hot-reloaded on every file-system change without a server restart.
   </Card>
   <Card title="Switchable Transports" icon="arrows-rotate">
-    Swap between EpoxyTransport, CurlTransport, or the legacy Bare-Client by changing a single line in `public/register-sw.js` and updating `public/uv/sw.js`.
+    Swap between EpoxyTransport, CurlTransport, or the legacy Bare-Client by changing a single line in `public/register-sw.js` and updating `public/purple/sw.js`.
   </Card>
   <Card title="Graceful Shutdown" icon="circle-stop">
     The server listens for `SIGINT` and `SIGTERM` and calls `server.close()` before exiting, ensuring in-flight requests are drained cleanly.

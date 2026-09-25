@@ -67,11 +67,11 @@ Selenite is a standard Node.js application that can be deployed anywhere Node 16
 
         The start script runs `node --env-file=.env src/index.js`. On a successful start you will see:
 
-        ```
+        ```text
         Listening on:
-            http://localhost:8080
-            http://myhostname:8080
-            http://0.0.0.0:8080
+        	http://localhost:8080
+        	http://myhostname:8080
+        	http://0.0.0.0:8080
         ```
 
         The server binds to `0.0.0.0`, so it is reachable on every network interface. Point your reverse proxy (Nginx, Caddy, Traefik, etc.) at `localhost:8080` and terminate TLS there.
@@ -120,11 +120,11 @@ Selenite is a standard Node.js application that can be deployed anywhere Node 16
 
         You should see:
 
-        ```
+        ```text
         Listening on:
-            http://localhost:8080
-            http://<container-hostname>:8080
-            http://0.0.0.0:8080
+        	http://localhost:8080
+        	http://<container-hostname>:8080
+        	http://0.0.0.0:8080
         ```
       </Step>
     </Steps>
@@ -187,7 +187,7 @@ Selenite is a standard Node.js application that can be deployed anywhere Node 16
 
 Selenite registers handlers for both `SIGINT` (Ctrl-C) and `SIGTERM` (sent by process managers and container runtimes on stop). When either signal arrives, the server logs a message and calls `server.close()` before exiting:
 
-```
+```text
 SIGTERM signal received: closing HTTP server
 ```
 
