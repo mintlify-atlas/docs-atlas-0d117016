@@ -1,47 +1,126 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Quickstart: Run Selenite Locally in Under 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Clone the Selenite repository, configure your password file, and have a fully working Ultraviolet proxy running on localhost in under five minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through standing up a local Selenite instance on your own machine. By the end you will have a fully working web proxy reachable at `http://localhost:8080`, protected by a per-domain password, and ready to proxy any site through the Ultraviolet service worker engine.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Check Prerequisites">
+    Confirm that Node.js 16 or later and npm 7 or later are installed:
 
     ```bash
-    npm install your-package
+    node --version   # must be >= 16.0.0
+    npm --version    # must be >= 7.0.0
     ```
+
+    If either command is missing or reports a lower version, install the latest LTS release from [nodejs.org](https://nodejs.org) before continuing.
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Clone the Repository">
+    Clone the Selenite proxy repository and change into the project directory:
 
     ```bash
-    your-cli init
+    git clone https://github.com/selenite-cc/proxy.git && cd proxy
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Install Dependencies">
+    Install all runtime dependencies declared in `package.json`:
 
     ```bash
-    your-cli start
+    npm install
+    ```
+
+    This pulls in Ultraviolet, EpoxyTransport, bare-mux, wisp-server-node, Express, and cookie-parser, among other packages.
+  </Step>
+
+  <Step title="Create the Password File">
+    Selenite uses a JSON file at `src/api/some.pass` to map domain names to passwords. The server reads this file on startup **and** watches it for live changes, so you can add or update credentials without restarting.
+
+    Create the file now with at least one entry:
+
+    ```bash
+    mkdir -p src/api
+    ```
+
+    ```json
+    {"yourdomain.com": "yourpassword"}
+    ```
+
+    Save that JSON object to `src/api/some.pass`. The keys are the hostnames that visitors use to reach your proxy; the values are the passwords they must enter. You can add more entries at any time — the server will pick up the change automatically.
+
+    <Note>
+      The `/api/addLink` endpoint lets you add new domain–password pairs at runtime without editing the file by hand. It is gated by the `ADD_LINK_PASS` environment variable set in the next step.
+    </Note>
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Copy the example environment file and set your API password:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    Open `.env` and replace the placeholder with a strong secret:
+
+    ```bash
+    ADD_LINK_PASS=your-secret-api-password
+    ```
+
+    `ADD_LINK_PASS` is the password that must be provided in the `auth` field of any `POST /api/addLink` request. Leave it unset to disable the add-link API entirely.
+
+    You can also set the `PORT` variable here if you need the server to listen on a port other than `8080`:
+
+    ```bash
+    PORT=3000
+    ADD_LINK_PASS=your-secret-api-password
     ```
   </Step>
+
+  <Step title="Start the Server">
+    Start Selenite with the `start` script defined in `package.json`:
+
+    ```bash
+    npm start
+    ```
+
+    Internally this runs:
+
+    ```bash
+    node --env-file=.env src/index.js
+    ```
+
+    On a successful start you will see output similar to the following, listing every address the server is bound to:
+
+    ```
+    Listening on:
+        http://localhost:8080
+        http://myhostname:8080
+        http://0.0.0.0:8080
+    ```
+
+    The server binds to all interfaces (`0.0.0.0`) by default so it is reachable from other machines on your network as well as locally.
+  </Step>
+
+  <Step title="Open the Proxy in Chromium">
+    Navigate to `http://localhost:8080` in a **Chromium-based browser**.
+
+    If you configured a password for `localhost` in `src/api/some.pass`, the page will prompt you for it. Once authenticated, the Ultraviolet proxy interface loads and you can start browsing through the proxy.
+
+    <Tip>
+      Always use a Chromium-based browser (Chrome, Edge, Brave, etc.) for localhost testing. Chromium permits service worker registration over plain HTTP on `localhost`, so the Ultraviolet service worker registers without issue. Firefox works correctly once you deploy to a domain with a valid SSL certificate, but it will not register the service worker over `http://localhost`.
+    </Tip>
+
+    <Note>
+      Firefox requires HTTPS for service worker registration on any hostname other than the explicitly allowed `localhost` and `127.0.0.1`. Until you deploy Selenite behind a TLS-terminating reverse proxy with a valid certificate, Firefox users will see a non-functional proxy page.
+    </Note>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Next Steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+Now that your local instance is running, you are ready to deploy it publicly. See the [Deployment](/deployment) guide for instructions on running Selenite on a VPS, inside Docker, or on managed platforms like Railway, Replit, Glitch, and Koyeb.

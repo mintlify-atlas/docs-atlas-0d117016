@@ -1,0 +1,72 @@
+{
+  "projectType": "saas",
+  "projectName": "Selenite",
+  "projectDescription": "A self-hosted web proxy powered by Ultraviolet and service workers that lets users bypass internet censorship and access blocked websites through a password-protected, themeable frontend.",
+  "theme": "almond",
+  "primaryColor": "#0000ee",
+  "lightColor": "#c8291e",
+  "darkColor": "#171609",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "deployment"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/password-protection",
+              "configuration/http-transport"
+            ]
+          },
+          {
+            "group": "Customization",
+            "pages": [
+              "customization/themes",
+              "customization/frontend"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/api",
+              "reference/uv-config",
+              "reference/service-worker",
+              "reference/architecture"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Ultraviolet-powered service-worker proxy for bypassing internet censorship",
+    "Password protection per domain stored in a JSON file with live-reload",
+    "Multiple themeable UI skins (16+ themes including Catppuccin flavors, vaporwave, mountains, etc.)",
+    "Wisp WebSocket transport for encrypted proxied traffic",
+    "EpoxyTransport (default) and CurlTransport support via bare-mux",
+    "\"Open Blank\" mode that disguises the proxy in a separate window",
+    "Docker-ready with multi-platform (amd64/arm64) builds",
+    "One-click deployment to Replit, Railway, Glitch, and Koyeb",
+    "REST API for programmatic link/password management"
+  ],
+  "publicApiSurface": [
+    "POST /api/addLink — add a domain+password entry (requires ADD_LINK_PASS auth)",
+    "GET /check?domain=<hostname> — check whether a domain is in the allow-list",
+    "GET /purple/service/* — Ultraviolet service-worker proxy prefix",
+    "WS /wisp/ — Wisp WebSocket endpoint for encrypted transport",
+    "GET /purple/* — Ultraviolet static assets (uv.bundle.js, uv.config.js, etc.)",
+    "GET /epoxy/* — EpoxyTransport static assets",
+    "GET /baremux/* — bare-mux static assets",
+    "ENV PORT — TCP port the server listens on (default 8080)",
+    "ENV ADD_LINK_PASS — shared secret for the addLink API"
+  ]
+}

@@ -1,0 +1,135 @@
+---
+title: "Selenite Theming: Built-In Themes and Customisation"
+sidebarTitle: "Themes"
+description: "Explore Selenite's 16 built-in themes, learn how the CSS custom-property system works, and create your own theme by adding a single CSS block."
+---
+
+Selenite ships with sixteen ready-to-use themes — from the default deep-purple **selenite** palette to Catppuccin variants and scenery-backed themes like **sunset** and **vaporwave**. Every theme is expressed as a set of CSS custom properties applied to `body[theme=…]`, so switching a theme is a single `localStorage` write and applying your own is as simple as dropping one new CSS rule block into `public/index.css`.
+
+## Switching themes
+
+The **Settings** page at `/settings.html` exposes every built-in theme as a styled button. Clicking a button calls `setTheme()`, which writes to `localStorage` and immediately updates the page body.
+
+Themes with background images have a paired **Background** checkbox (`#bgTheme`). When the checkbox is unchecked, the `false`-suffixed variant (e.g. `sunsetfalse`) is selected instead — the colours stay the same but the background image is omitted.
+
+```js
+// themes.js — loaded on every page before <body> renders
+document.addEventListener("DOMContentLoaded", () => {
+  if (localStorage.getItem("selenite.theme")) {
+    document.body.setAttribute("theme", localStorage.getItem("selenite.theme"));
+  } else {
+    document.body.setAttribute("theme", "main");
+  }
+});
+
+function setTheme(theme) {
+  localStorage.setItem("selenite.theme", theme);
+  document.body.setAttribute("theme", theme);
+}
+```
+
+You can also call `setTheme()` from the browser console at any time, or set the key programmatically:
+
+```js
+localStorage.setItem("selenite.theme", "mocha");
+document.body.setAttribute("theme", "mocha");
+```
+
+## CSS custom properties
+
+Every theme defines the following custom properties on `body[theme=…]`. All other styles in `index.css` consume these variables — you never need to touch individual selectors.
+
+| Property | Purpose |
+|---|---|
+| `--bg` | Page background. Can be a plain colour **or** a `url(…), fallback-color` pair for image themes. |
+| `--uibg` | Background of the header, footer, and card/game tiles. |
+| `--inputbg` | Fill colour for text inputs and buttons. |
+| `--inputborder` | Border colour for text inputs and buttons. |
+| `--textcolor` | Primary text and link colour. |
+| `--shadow` | `text-shadow` / `drop-shadow` value applied to headings, links, and images. |
+
+<Note>
+  `--shadow` is optional. Themes that omit it simply inherit `none` from the browser default. The Catppuccin, sunset, mountains, vaporwave, seraph, and nighttime themes all define it explicitly.
+</Note>
+
+## Built-in themes
+
+### Solid-colour themes
+
+These themes use a flat colour for `--bg` and do not have a background-image variant.
+
+| Theme key | Display name | Background (`--bg`) | UI (`--uibg`) |
+|---|---|---|---|
+| `main` | **selenite** (default) | `#10002b` deep purple | `#240046` |
+| `light` | light mode | `#c5c5c5` light grey | `#b3b3b3` |
+| `dark` | dark mode | `#0c0c0c` near-black | `#242424` |
+| `egamepass` | e-gamepass | `#16416f` blue | `#185494` |
+| `cools1te` | cools1te | `#8e14af` purple/lavender | `#ab28cf` |
+| `threekho` | 3kh0 | `#000000` black | `#111111` green-tinted |
+
+### Background-image themes
+
+Each of these ships with a full-page background image. The Settings page checkbox controls whether you get the image (`theme`) or the flat-colour fallback (`themefalse`).
+
+| Theme key | Display name | Fallback `--bg` | Notes |
+|---|---|---|---|
+| `sunset` / `sunsetfalse` | sunset | `rgb(59, 67, 78)` blue-grey | wallhaven.cc/w/jxl3qp |
+| `mountains` / `mountainsfalse` | mountains | `#bf7483` dusty rose | wallhaven.cc/w/l82kpr |
+| `vaporwave` / `vaporwavefalse` | vaporwave | `#61437a` purple/violet | wallhaven.cc/w/l82kpr |
+| `bgs` / `bgsfalse` | bigfoot | `#2f1d0f` brown | bfs-bdp.pages.dev |
+| `seraph` / `seraphfalse` | seraph | `#222222` near-black | black & white palette |
+| `nighttime` / `nighttimefalse` | nighttime | `#323853` navy | wallhaven.cc/w/l882py |
+
+### Catppuccin themes
+
+All four Catppuccin flavours are included. They also support the background-image toggle (e.g. `mocha` vs `mochafalse`), though by default the `false` variant uses identical colours without a background image.
+
+| Theme key | Display name | Background (`--bg`) |
+|---|---|---|
+| `mocha` / `mochafalse` | **Mocha** | `#1e1e2e` |
+| `macchiato` / `macchiatofalse` | **Macchiato** | `#24273a` |
+| `frappe` / `frappefalse` | **Frappe** | `#303446` |
+| `latte` / `lattefalse` | **Latte** | `#eff1f5` |
+
+## Adding a custom theme
+
+Open `public/index.css` and append a new `body[theme=…]` block. Use any of the six custom properties described above. Only the properties you specify are overridden — any you omit fall back to the `:root` defaults (the **selenite** palette).
+
+```css
+/* public/index.css — append at the bottom */
+body[theme=mytheme] {
+  --bg: #0d1117;
+  --uibg: #161b22;
+  --inputbg: #21262d;
+  --inputborder: #30363d;
+  --textcolor: #e6edf3;
+  --shadow: 0px 0px 4px #58a6ff;
+}
+```
+
+Then activate it in the browser console or from any JavaScript on the page:
+
+```js
+setTheme("mytheme");
+```
+
+<Tip>
+  To add your theme to the Settings page button grid, add a new `<button>` element inside the `.samerow.themebtns` div in `public/settings.html` and call `setTheme('mytheme')` in its `onclick` attribute — matching the pattern of the existing buttons.
+</Tip>
+
+### Custom theme with a background image
+
+Set `--bg` to a CSS `url()` value followed by a fallback colour. Selenite's `body` already has `background-size: cover`, `background-position: center`, and `background-attachment: fixed` set globally, so the image fills the viewport automatically.
+
+```css
+body[theme=forestnight] {
+  --bg: url("img/backgrounds/forest_night.jpg"), #0a1a0f;
+  --uibg: #1a2e1a;
+  --inputbg: #243824;
+  --inputborder: #3a5c3a;
+  --textcolor: #d4f5d4;
+  --shadow: 0px 0px 4px #7cfc00;
+}
+```
+
+Place the image file under `public/img/backgrounds/` so Express serves it as a static asset alongside the built-in background images.

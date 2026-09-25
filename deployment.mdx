@@ -1,0 +1,194 @@
+---
+title: "Deploy Selenite: VPS, Docker, and Managed Platforms"
+sidebarTitle: "Deployment"
+description: "Deploy Selenite to a VPS, Docker container, or a managed platform like Railway, Replit, Glitch, or Koyeb with automatic SSL for all browsers."
+---
+
+Selenite is a standard Node.js application that can be deployed anywhere Node 16+ runs. This page covers every supported deployment path: a bare terminal/VPS installation, a Docker container built with the included workflow, and four managed cloud platforms that require no server administration. Whichever target you choose, the end goal is the same — a publicly reachable HTTPS endpoint so both Chromium and Firefox users can use the proxy.
+
+<Warning>
+  Firefox requires a valid SSL certificate to register service workers on any hostname other than `localhost` and `127.0.0.1`. Without HTTPS, Firefox users will load the page but the Ultraviolet service worker will not register and the proxy will not function. Always provision a TLS certificate — via your cloud provider, a reverse proxy like Nginx with Let's Encrypt, or a platform that handles certificates automatically — before sharing your Selenite URL publicly.
+</Warning>
+
+## Deployment Targets
+
+<Tabs>
+  <Tab title="Terminal / VPS">
+    This is the recommended path for any server or VPS where you have SSH access.
+
+    <Steps>
+      <Step title="Clone and enter the repository">
+        ```bash
+        git clone https://github.com/selenite-cc/proxy.git && cd proxy
+        ```
+      </Step>
+
+      <Step title="Install production dependencies only">
+        Use `npm ci` with `--omit=dev` to skip development tooling (ESLint, Prettier) and install from the lockfile for a reproducible build:
+
+        ```bash
+        npm ci --omit=dev
+        ```
+      </Step>
+
+      <Step title="Create the password file">
+        ```bash
+        mkdir -p src/api
+        ```
+
+        Create `src/api/some.pass` with at least one domain–password pair:
+
+        ```json
+        {"yourdomain.com": "yourpassword"}
+        ```
+      </Step>
+
+      <Step title="Set environment variables">
+        Create a `.env` file (or export the variables in your shell / systemd unit):
+
+        ```bash
+        cp .env.example .env
+        ```
+
+        Edit `.env`:
+
+        ```bash
+        PORT=8080
+        ADD_LINK_PASS=your-secret-api-password
+        ```
+
+        `PORT` defaults to `8080` when unset. `ADD_LINK_PASS` gates the `/api/addLink` endpoint that lets you add domain–password pairs at runtime.
+      </Step>
+
+      <Step title="Start the server">
+        ```bash
+        npm start
+        ```
+
+        The start script runs `node --env-file=.env src/index.js`. On a successful start you will see:
+
+        ```
+        Listening on:
+            http://localhost:8080
+            http://myhostname:8080
+            http://0.0.0.0:8080
+        ```
+
+        The server binds to `0.0.0.0`, so it is reachable on every network interface. Point your reverse proxy (Nginx, Caddy, Traefik, etc.) at `localhost:8080` and terminate TLS there.
+      </Step>
+    </Steps>
+
+    <Note>
+      Selenite handles `SIGINT` and `SIGTERM` gracefully. When one of these signals is received, the server logs `SIGTERM signal received: closing HTTP server`, calls `server.close()` to drain in-flight requests, and then exits. This means `systemctl stop`, `docker stop`, and Ctrl-C all result in a clean shutdown.
+    </Note>
+  </Tab>
+
+  <Tab title="Docker">
+    The repository includes a GitHub Actions workflow (`.github/workflows/docker-image.yml`) that uses `redhat-actions/buildah-build` to produce a multi-architecture image called `ultraviolet-node` targeting `linux/amd64` and `linux/arm64`. You can reproduce that build locally with Docker or Podman.
+
+    <Steps>
+      <Step title="Build the image">
+        The workflow passes `npm ci --omit=dev --frozen-lockfile` as the build argument for the npm install step. Replicate this locally:
+
+        ```bash
+        docker build \
+          --build-arg NPM_BUILD="npm ci --omit=dev --frozen-lockfile" \
+          -t ultraviolet-node:latest \
+          -f docker/Dockerfile .
+        ```
+      </Step>
+
+      <Step title="Run the container">
+        Map the container's default port `8080` to your host and pass environment variables:
+
+        ```bash
+        docker run -d \
+          --name selenite \
+          -p 8080:8080 \
+          -e PORT=8080 \
+          -e ADD_LINK_PASS=your-secret-api-password \
+          ultraviolet-node:latest
+        ```
+
+        The server will start and log the listening addresses. Because it binds to `0.0.0.0` inside the container, the port mapping above makes it available at `http://<host-ip>:8080`.
+      </Step>
+
+      <Step title="Verify the container is running">
+        ```bash
+        docker logs selenite
+        ```
+
+        You should see:
+
+        ```
+        Listening on:
+            http://localhost:8080
+            http://<container-hostname>:8080
+            http://0.0.0.0:8080
+        ```
+      </Step>
+    </Steps>
+
+    <Note>
+      The CI workflow tests the container by running `./docker/test.sh -p 8080 -h 0.0.0.0 -t 15` against the built image before pushing to Docker Hub. You can run the same script locally to validate your image.
+    </Note>
+
+    <Note>
+      `SIGINT` and `SIGTERM` are both handled for graceful shutdown, so `docker stop selenite` will drain in-flight requests before the container exits.
+    </Note>
+  </Tab>
+
+  <Tab title="Managed Platforms">
+    For deployments that do not require managing a server directly, Selenite (as an Ultraviolet-App) is compatible with several managed platforms. All of them provision HTTPS automatically, which means Firefox will work out of the box.
+
+    <CardGroup cols={2}>
+      <Card
+        title="Deploy on Railway"
+        icon="train"
+        href="https://github.com/titaniumnetwork-dev/Ultraviolet-App/wiki/Deploy-on-Railway"
+      >
+        One-click Railway deployment with automatic HTTPS and environment variable management built in.
+      </Card>
+      <Card
+        title="Run on Replit"
+        icon="code"
+        href="https://github.com/titaniumnetwork-dev/Ultraviolet-App/wiki/Run-on-Replit"
+      >
+        Fork and run directly in Replit's browser-based IDE — no local setup required.
+      </Card>
+      <Card
+        title="Remix on Glitch"
+        icon="puzzle-piece"
+        href="https://github.com/titaniumnetwork-dev/Ultraviolet-App/wiki/Remix-on-Glitch"
+      >
+        Remix the project on Glitch for a live, editable deployment with instant HTTPS.
+      </Card>
+      <Card
+        title="Deploy to Koyeb"
+        icon="cloud"
+        href="https://github.com/titaniumnetwork-dev/Ultraviolet-App/wiki/Deploy-to-Koyeb"
+      >
+        Deploy to Koyeb's global edge network with automatic TLS and zero-downtime deployments.
+      </Card>
+    </CardGroup>
+
+    Each platform wiki page provides step-by-step instructions specific to that platform, including how to set the `ADD_LINK_PASS` environment variable and configure a custom domain.
+  </Tab>
+</Tabs>
+
+## Environment Variable Reference
+
+| Variable        | Default | Description |
+|-----------------|---------|-------------|
+| `PORT`          | `8080`  | The port the HTTP server listens on. The server binds to `0.0.0.0` on that port. |
+| `ADD_LINK_PASS` | *(unset)* | Password required in the `auth` field of `POST /api/addLink` requests. Leave unset to disable the endpoint. |
+
+## Graceful Shutdown
+
+Selenite registers handlers for both `SIGINT` (Ctrl-C) and `SIGTERM` (sent by process managers and container runtimes on stop). When either signal arrives, the server logs a message and calls `server.close()` before exiting:
+
+```
+SIGTERM signal received: closing HTTP server
+```
+
+This ensures that in-flight proxy requests are drained before the process exits, which is important for zero-downtime deployments and rolling restarts.

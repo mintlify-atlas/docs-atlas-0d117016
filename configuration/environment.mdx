@@ -1,0 +1,91 @@
+---
+title: "Configure Selenite with Environment Variables"
+sidebarTitle: "Environment"
+description: "Learn which environment variables Selenite reads at startup, what each one controls, and how to supply them via a .env file or the command line."
+---
+
+Selenite reads a small set of environment variables at startup to control the HTTP server port and protect the link-management API. All variables can be placed in a `.env` file in the project root — Node's built-in `--env-file` flag loads it automatically — or passed directly on the command line when you prefer not to store secrets on disk.
+
+## Environment variables
+
+<ParamField query="PORT" type="number">
+  The TCP port the HTTP server listens on. Parsed with `parseInt`; falls back to
+  `8080` if the value is missing or not a valid number.
+
+  **Default:** `8080`
+
+  ```js
+  // src/index.js
+  let port = parseInt(process.env.PORT || "");
+  if (isNaN(port)) port = 8080;
+  server.listen({ port });
+  ```
+</ParamField>
+
+<ParamField query="ADD_LINK_PASS" type="string">
+  The shared secret required in the `auth` field of every `POST /api/addLink`
+  request body. Requests that omit `auth` or supply the wrong value receive a
+  `401 Unauthorized` response. Defined in `.env.example` with the comment
+  *"password to use for the adding links api"*.
+
+  **Default:** none — leave unset to disable the add-link API entirely.
+
+  ```js
+  // src/api/verify.cjs
+  function canAddLink(req) {
+    if (req.body.auth) {
+      return req.body.auth == process.env.ADD_LINK_PASS;
+    } else {
+      return false;
+    }
+  }
+  ```
+</ParamField>
+
+## Setting up the `.env` file
+
+Selenite ships an `.env.example` that documents every supported variable. Copy it to `.env` and fill in your values before starting the server.
+
+<Steps>
+  <Step title="Copy the example file">
+    ```bash
+    cp .env.example .env
+    ```
+  </Step>
+  <Step title="Edit .env with your values">
+    ```bash
+    # .env
+    PORT=3000
+    ADD_LINK_PASS=your-strong-secret-here
+    ```
+  </Step>
+  <Step title="Start the server">
+    ```bash
+    npm start
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The `start` script in `package.json` runs `node --env-file=.env src/index.js`.
+  Node's `--env-file` flag parses the file and populates `process.env` before
+  your code runs, so no third-party dotenv library is required.
+</Note>
+
+## Passing variables on the command line
+
+If you prefer not to use a `.env` file — for example, in a containerised environment where secrets are injected at runtime — you can prefix variables directly on the command line:
+
+```bash
+PORT=3000 ADD_LINK_PASS=your-strong-secret-here node src/index.js
+```
+
+Or export them from your shell session first:
+
+```bash
+export PORT=3000
+export ADD_LINK_PASS=your-strong-secret-here
+node src/index.js
+```
+
+This approach is also useful during development when you want to test a different port without touching the `.env` file.

@@ -1,0 +1,207 @@
+---
+title: "Selenite Architecture Overview"
+sidebarTitle: "Architecture"
+description: "End-to-end request flow through Selenite — from user input to proxied response — including the password middleware and transport stack."
+---
+
+Selenite is a self-hosted web proxy built from four cooperating layers: an Express HTTP server, the Ultraviolet service worker, the EpoxyTransport network layer, and a Wisp WebSocket server. A user's URL or search query flows from the browser UI through a service worker, down a WebSocket tunnel to the server, and out to the open internet — with the response travelling back the same way. This page walks through every stage of that pipeline, explains the domain-based password middleware that gates access, and describes the static-file serving order that determines which handler wins for any given request.
+
+---
+
+## Full request pipeline
+
+```
+Browser UI
+    │  user types in #uv-address
+    ▼
+search()                    resolves input → fully-qualified URL
+    │
+    ▼
+registerSW()                ensures /purple/sw.js is installed,
+    │                       sets EpoxyTransport → wss://host/wisp/
+    ▼
+#uv-frame src set to        /purple/service/<encodeUrl(resolvedUrl)>
+    │
+    ▼
+Service Worker              intercepts request (scope = /purple/service/)
+(UVServiceWorker.fetch)     decodes URL, rewrites request headers
+    │
+    ▼
+EpoxyTransport              tunnels rewritten request over
+    │                       encrypted WebSocket (Wisp protocol)
+    ▼
+Wisp server (/wisp/)        wisp-server-node routes the connection
+    │                       to the target origin on the open internet
+    ▼
+Target website              returns HTTP response
+    │
+    ▼ (same path in reverse)
+Service Worker              rewrites response headers & HTML,
+    │                       re-encodes any embedded URLs
+    ▼
+#uv-frame                   renders the proxied page
+```
+
+<Steps>
+  <Step title="User submits a URL or search query">
+    The user types into the `#uv-address` input and submits the `#uv-form`. `public/index.js` captures the `submit` event with `event.preventDefault()` so the browser does not navigate away.
+  </Step>
+  <Step title="search() resolves input to a URL">
+    The raw input is passed to `search(address.value, searchEngine.value)` from `public/search.js`. The function tries to parse the input as an absolute URL, then with `http://` prepended (accepting only inputs with a `.` in the hostname), and finally falls back to substituting the input into the search-engine template using `encodeURIComponent`. The result is always a fully-qualified URL string.
+  </Step>
+  <Step title="registerSW() ensures the service worker is active">
+    `registerSW()` from `public/register-sw.js` calls `navigator.serviceWorker.register("/purple/sw.js", { scope: __uv$config.prefix })`. If the protocol is `http://` and the hostname is not `localhost` or `127.0.0.1`, the function throws before attempting registration. After registration, `BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl })` points the transport at the same-origin Wisp endpoint.
+  </Step>
+  <Step title="The proxy iframe is loaded">
+    `public/index.js` makes `#uv-frame` visible and sets its `src` to:
+
+    ```js
+    frame.src = __uv$config.prefix + __uv$config.encodeUrl(url);
+    // e.g. /purple/service/<xor-encoded-target>
+    ```
+
+    The browser begins a navigation request for that URL.
+  </Step>
+  <Step title="The service worker intercepts the request">
+    Because the URL begins with `/purple/service/`, it falls within the service worker's registered scope. The `fetch` event listener in `public/purple/sw.js` fires:
+
+    ```js
+    self.addEventListener('fetch', (event) => event.respondWith(sw.fetch(event)));
+    ```
+
+    `UVServiceWorker.fetch()` decodes the target URL using `__uv$config.decodeUrl`, rewrites outbound request headers (host, referer, cookies) to match the target origin, and forwards the request through EpoxyTransport.
+  </Step>
+  <Step title="EpoxyTransport tunnels the request over Wisp">
+    EpoxyTransport (`@mercuryworkshop/epoxy-transport`) takes the rewritten HTTP request and sends it as a Wisp protocol message over the `wss://yourdomain.com/wisp/` WebSocket connection established during `registerSW()`. This lets the request escape the browser's same-origin policy constraints.
+  </Step>
+  <Step title="The Wisp server forwards to the target origin">
+    On the server side, `src/index.js` listens for WebSocket upgrade events:
+
+    ```js
+    server.on("upgrade", (req, socket, head) => {
+      if (req.url.endsWith("/wisp/")) wisp.routeRequest(req, socket, head);
+      else socket.end();
+    });
+    ```
+
+    `wisp-server-node` reads the target hostname and port from the Wisp message, opens a TCP connection to the target, and relays data in both directions. Upgrade requests to any URL that does not end with `/wisp/` are closed immediately.
+  </Step>
+  <Step title="The response is rewritten and rendered">
+    The target's HTTP response travels back through Wisp and EpoxyTransport to the service worker. `UVServiceWorker` rewrites response headers (removing `X-Frame-Options`, rewriting `Content-Security-Policy`, etc.) and injects `uv.client.js` into HTML documents so that JavaScript APIs (`fetch`, `XMLHttpRequest`, `location`, `WebSocket`) work correctly relative to the proxy prefix. The rewritten response is then returned to the iframe, which renders the proxied page.
+  </Step>
+</Steps>
+
+---
+
+## Password middleware
+
+Every request for a static file passes through the `checkPass` middleware registered in `src/index.js` before it reaches Express's static file handler:
+
+```js src/index.js (excerpt)
+app.use((req, res, next) => {
+  if (!checkPass(req)) {
+    res.send(
+      "<script>document.cookie = `password=${prompt('Enter the password')}`;location.reload();</script>"
+    );
+  } else {
+    next();
+  }
+});
+```
+
+`checkPass(req)` in `src/api/verify.cjs` reads the `password` cookie, then calls `isPassValid(pass, website)` which compares the cookie value against the entry for `req.hostname` in the `passwords` object (loaded from `src/api/some.pass`):
+
+```js src/api/verify.cjs (excerpt)
+function isPassValid(pass, website) {
+  try {
+    return passwords[website] == pass;
+  } catch {
+    return false;
+  }
+}
+
+function checkPass(req) {
+  let cookies = get_cookies(req);
+  if (cookies["password"]) {
+    return isPassValid(cookies["password"], req.hostname);
+  } else {
+    return false;
+  }
+}
+```
+
+If the check fails — because the `password` cookie is absent, expired, or wrong — the browser receives a small inline script instead of the requested file. That script calls `window.prompt()` to ask for the password, writes the result into the `password` cookie, and reloads the page:
+
+```html Prompt injection
+<script>
+  document.cookie = `password=${prompt('Enter the password')}`;
+  location.reload();
+</script>
+```
+
+On the reload, `checkPass` runs again. If the entered password matches the domain's entry in `some.pass`, the request proceeds normally. The REST endpoint and the `/check` route are registered **before** the middleware, so they are never gated by the password check.
+
+<Tip>
+  The `password` cookie is set without a `Secure`, `HttpOnly`, or `SameSite` attribute, so it is accessible to JavaScript and persists for the browser session. In production, ensure the site is served over HTTPS to prevent the cookie from being transmitted in plaintext.
+</Tip>
+
+---
+
+## Static file serving order
+
+Express processes routes and middleware in registration order. The order in `src/index.js` determines which handler wins for any given request path:
+
+| Priority | Handler | Matches |
+|---|---|---|
+| 1 | `POST /api/addLink` | Domain management write |
+| 2 | `GET /check` | Domain allow-list query |
+| 3 | `checkPass` middleware | All remaining requests |
+| 4 | `express.static(publicPath)` | Files under `public/` |
+| 5 | `express.static(uvPath)` at `/purple/` | UV npm package assets |
+| 6 | `express.static(epoxyPath)` at `/epoxy/` | EpoxyTransport assets |
+| 7 | `express.static(baremuxPath)` at `/baremux/` | bare-mux assets |
+| 8 | 404 fallback | Everything else → `public/404.html` |
+
+The comment in `src/index.js` notes that `public/purple/uv.config.js` intentionally shadows the stock `uv.config.js` from the npm package. Because `publicPath` is mounted before `/purple/`, requests for `/purple/uv.config.js` are served from `public/purple/uv.config.js` (Selenite's customised version) rather than the file inside the `@titaniumnetwork-dev/ultraviolet` package.
+
+---
+
+## COOP / COEP headers
+
+Every HTTP response — including static files, REST responses, and the 404 page — carries two cross-origin isolation headers, added by the raw Node.js `http.Server` request handler before Express processes the request:
+
+```js src/index.js (excerpt)
+server.on("request", (req, res) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  app(req, res);
+});
+```
+
+<Note>
+  `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` together enable the **cross-origin isolated** browsing context that is required for `SharedArrayBuffer` to be available in the page. Some proxied sites and browser APIs (including certain WebAssembly use-cases) depend on `SharedArrayBuffer`. Without these headers the browser refuses to expose the API, causing those sites to break or load with degraded functionality. The headers also isolate the Selenite window from other browsing contexts, preventing cross-origin opener attacks.
+</Note>
+
+---
+
+## Server start-up sequence
+
+When `node src/index.js` runs, the following initialisation steps occur before any request is served:
+
+<Steps>
+  <Step title="Load some.pass into memory">
+    `fs.readFile` reads `src/api/some.pass` asynchronously. Once parsed, `links` (in `index.js`) holds the array of domain keys and `passwords` (in `addPass.cjs` and `verify.cjs`) holds the full object. `fs.watch` is registered on the file so that any subsequent write triggers an in-memory reload.
+  </Step>
+  <Step title="Register Express middleware and routes">
+    The routes and middleware are registered in the order described in the serving-order table above.
+  </Step>
+  <Step title="Create the HTTP server and bind event handlers">
+    `createServer()` wraps Express. The `request` handler adds COOP/COEP headers before delegating to Express. The `upgrade` handler routes `/wisp/` connections to `wisp-server-node`.
+  </Step>
+  <Step title="Listen on PORT (default 8080)">
+    The server binds to `process.env.PORT` if set and a valid integer; otherwise it defaults to `8080`. The listening address is printed to stdout, including `localhost`, the OS hostname, and the bound IP address.
+  </Step>
+  <Step title="Register SIGINT / SIGTERM handlers">
+    `process.on("SIGINT", shutdown)` and `process.on("SIGTERM", shutdown)` ensure the server closes cleanly when stopped by the OS or a container orchestrator.
+  </Step>
+</Steps>

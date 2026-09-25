@@ -1,0 +1,207 @@
+---
+title: "Selenite Frontend Customisation: Titles, Search & More"
+sidebarTitle: "Frontend"
+description: "Edit static files in public/ to change Selenite's title, default search engine, header links, service worker path, UV prefix, codec, and Open Blank target."
+---
+
+Selenite's entire frontend lives inside `public/` and is served as static files directly by Express. That means every change described on this page takes effect as soon as you save the file — no build step is required. The sections below walk through each customisable area in the order you are most likely to encounter it.
+
+<Note>
+  Changes to files inside `public/` are served immediately. You do not need to restart the server for HTML, CSS, or JavaScript edits to take effect.
+</Note>
+
+## Page title and branding
+
+The browser tab title and the visible `<h1>` heading on the homepage are both set in `public/index.html`.
+
+<CodeGroup>
+
+```html Before
+<title>Selenite</title>
+```
+
+```html After
+<title>My Proxy</title>
+```
+
+</CodeGroup>
+
+The `<h1>` on the main page reads:
+
+```html
+<h1>selenite</h1>
+```
+
+Change it to any text you like. The sub-heading paragraph directly below it can also be updated:
+
+```html
+<p>welcome to selenite.. if it was a proxy and powered by ultraviolet</p>
+```
+
+Both elements are inside `<main id="main" class="noscroll">` in `public/index.html`.
+
+## Default search engine
+
+When a user types a plain search query (rather than a full URL) into the address bar, Selenite routes it through the search engine template stored in the hidden `#uv-search-engine` input.
+
+```html
+<!-- public/index.html -->
+<input
+  id="uv-search-engine"
+  value="https://www.google.com/search?q=%s"
+  type="hidden"
+/>
+```
+
+The `%s` placeholder is replaced at runtime by the text the user typed (see `public/search.js`). To switch to a different engine, replace the entire `value` attribute:
+
+<CodeGroup>
+
+```html Google (default)
+<input id="uv-search-engine" value="https://www.google.com/search?q=%s" type="hidden" />
+```
+
+```html DuckDuckGo
+<input id="uv-search-engine" value="https://duckduckgo.com/?q=%s" type="hidden" />
+```
+
+```html Bing
+<input id="uv-search-engine" value="https://www.bing.com/search?q=%s" type="hidden" />
+```
+
+</CodeGroup>
+
+## Header navigation links
+
+The sticky header in `public/index.html` contains three links by default — **Home**, **Settings**, and the **Selenite Discord** invite — plus the **Open Blank** anchor (covered below).
+
+```html
+<header class="noscroll">
+  <a href="index.html">Home</a>
+  <a href="settings.html">Settings</a>
+  <a href="https://discord.gg/7jyufnwJNf">Selenite Discord</a>
+  <a id="blank">Open Blank</a>
+</header>
+```
+
+The same header block is duplicated in `public/settings.html` (where `id="blank"` becomes `id="openBlankLink"`). Edit both files when adding or removing links.
+
+<CodeGroup>
+
+```html Add a link
+<header class="noscroll">
+  <a href="index.html">Home</a>
+  <a href="settings.html">Settings</a>
+  <a href="https://discord.gg/7jyufnwJNf">Selenite Discord</a>
+  <a href="games.html">Games</a>
+  <a id="blank">Open Blank</a>
+</header>
+```
+
+```html Remove the Discord link
+<header class="noscroll">
+  <a href="index.html">Home</a>
+  <a href="settings.html">Settings</a>
+  <a id="blank">Open Blank</a>
+</header>
+```
+
+</CodeGroup>
+
+## Open Blank mode
+
+The **Open Blank** button (`<a id="blank">`) is a privacy-assist feature. Clicking it does three things in sequence, as implemented in `public/index.js`:
+
+1. Opens a new browser window (`window.open()`).
+2. Injects a minimal HTML page into that window containing an `<iframe>` that loads Selenite at `location.origin`, plus a header bar with **Go Home** and **Reload** icon buttons.
+3. Redirects the **original** tab to `https://google.com`, making it appear to a casual observer that the user was simply searching Google.
+
+```js
+// public/index.js
+document.getElementById("blank").addEventListener("click", () => {
+  let win = window.open();
+  win.document.body.style.margin = "0";
+  win.document.body.style.height = "100vh";
+  let html = `
+    <style>*{margin:0;padding:0;border:none}body,iframe{height:100vh;width:100vw}
+    iframe{height:96vh}header{display:flex;height:4vh;justify-content:center;}
+    button{margin-right:100px;height:100%;aspect-ratio: 1 / 1}
+    /* …reload/goBack icon styles… */
+    </style>
+    <header><button id=goBack></button><button id=reload></button></header>
+    <iframe id=selenite></iframe>`;
+  win.document.querySelector("html").innerHTML = html;
+  win.eval(`
+    let selenite = document.getElementById("selenite");
+    selenite.setAttribute("src", "${location.origin}");
+    document.getElementById("goBack").addEventListener("click", function () {
+      selenite.contentDocument.location.href = selenite.contentDocument.location.origin;
+    });
+    document.getElementById("reload").addEventListener("click", function () {
+      selenite.contentDocument.location.href = selenite.contentDocument.location.href;
+    })
+  `);
+  location.href = "https://google.com";
+  close();
+});
+```
+
+To change the disguise URL (the page the original tab is redirected to), find the line `location.href = "https://google.com";` near the bottom of the listener and replace the URL.
+
+## Service worker path
+
+The Ultraviolet service worker is registered by `public/register-sw.js`. The path is stored in the `stockSW` constant:
+
+```js
+// public/register-sw.js
+const stockSW = "/purple/sw.js";
+```
+
+The service worker is registered with a scope equal to `__uv$config.prefix` (see [UV prefix](#uv-prefix-and-codec) below). The script also sets up the **Epoxy** transport for proxied network requests, pointing it at the `/wisp/` endpoint on the same host:
+
+```js
+let wispUrl =
+  (location.protocol === "https:" ? "wss" : "ws") +
+  "://" +
+  location.host +
+  "/wisp/";
+BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl });
+```
+
+<Note>
+  Service workers require **HTTPS** in production. The only exceptions are `localhost` and `127.0.0.1`, which are explicitly allow-listed in `register-sw.js`.
+</Note>
+
+## UV prefix and codec
+
+Ultraviolet's configuration lives in `public/purple/uv.config.js`. This file controls the path under which all proxied content is served and the codec used to encode proxied URLs.
+
+```js
+// public/purple/uv.config.js
+self.__uv$config = {
+  prefix: "/purple/service/",
+  encodeUrl: Ultraviolet.codec.xor.encode,
+  decodeUrl: Ultraviolet.codec.xor.decode,
+  handler: "/purple/uv.handler.js",
+  client: "/purple/uv.client.js",
+  bundle: "/purple/uv.bundle.js",
+  config: "/purple/uv.config.js",
+  sw: "/purple/uv.sw.js",
+};
+```
+
+- **`prefix`** — All proxied requests are routed through this path. The default is `/purple/service/`. The service worker's scope is set to this value automatically by `register-sw.js`.
+- **`encodeUrl` / `decodeUrl`** — XOR encoding is the default codec. It obfuscates proxied URLs in the browser address bar. Ultraviolet also ships with `Ultraviolet.codec.base64` as an alternative.
+
+<Warning>
+  If you change `prefix` or the codec in `uv.config.js`, you **must** update every other file that references these values — including the server-side route configuration and any hardcoded paths in `register-sw.js` (`stockSW`). A mismatch will break proxy requests entirely because the service worker scope and the fetch-handler path will no longer align.
+</Warning>
+
+When a search or URL is submitted, `index.js` constructs the proxied destination using these config values:
+
+```js
+// public/index.js — form submit handler
+frame.src = __uv$config.prefix + __uv$config.encodeUrl(url);
+```
+
+The resolved `frame.src` for a Google search might look like `/purple/service/6a9b8c…` (XOR-encoded URL bytes rendered as a hex-like string).

@@ -1,0 +1,158 @@
+---
+title: "HTTP Transport Options for Ultraviolet"
+sidebarTitle: "HTTP Transport"
+description: "Choose between EpoxyTransport, CurlTransport, and Bare-Client to control how Selenite fetches proxied data — encrypted Wisp or legacy unencrypted bare."
+---
+
+Selenite uses [bare-mux](https://github.com/MercuryWorkshop/bare-mux) as an abstraction layer between the Ultraviolet service worker and the network. bare-mux defines a common interface for "transports" — modules that the service worker uses to make HTTP requests on behalf of the browser. Swapping the transport changes how proxied traffic flows between the client and the server without requiring any changes to Ultraviolet itself.
+
+## The transport layer
+
+When the service worker intercepts a navigation or fetch event, it delegates the actual network request to whichever transport has been registered with `BareMux.SetTransport`. The transport is set on the page level (in `register-sw.js`) and must also be available inside the service worker itself (imported via `importScripts` in `public/purple/sw.js`).
+
+The three supported transports are:
+
+<CardGroup cols={3}>
+  <Card title="EpoxyTransport" icon="lock" href="https://github.com/MercuryWorkshop/EpoxyTransport">
+    Default. Encrypted traffic over Wisp WebSocket. Package: `@mercuryworkshop/epoxy-transport`. Served at `/epoxy/`.
+  </Card>
+  <Card title="CurlTransport" icon="shuffle" href="https://github.com/MercuryWorkshop/CurlTransport">
+    Alternative encrypted transport. Different implementation from Epoxy; same goal of keeping proxied traffic encrypted.
+  </Card>
+  <Card title="Bare-Client" icon="triangle-exclamation" href="https://github.com/MercuryWorkshop/Bare-as-module3">
+    Legacy unencrypted transport. Use only when the encrypted options are not viable.
+  </Card>
+</CardGroup>
+
+## Default setup: EpoxyTransport with Wisp
+
+Selenite ships with EpoxyTransport enabled. The `epoxyPath` package is served as static files at `/epoxy/` by the Express server:
+
+```js
+// src/index.js
+import { epoxyPath } from "@mercuryworkshop/epoxy-transport";
+app.use("/epoxy/", express.static(epoxyPath));
+```
+
+On page load, `public/register-sw.js` registers the Ultraviolet service worker and then sets EpoxyTransport as the active bare-mux transport. The Wisp WebSocket URL is constructed dynamically so it works on both HTTP and HTTPS deployments:
+
+```js
+// public/register-sw.js
+let wispUrl =
+  (location.protocol === "https:" ? "wss" : "ws") +
+  "://" +
+  location.host +
+  "/wisp/";
+BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl });
+```
+
+The Wisp WebSocket endpoint at `/wisp/` is handled in the server's `upgrade` event:
+
+```js
+// src/index.js
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.endsWith("/wisp/")) wisp.routeRequest(req, socket, head);
+  else socket.end();
+});
+```
+
+The service worker imports the Epoxy bundle before the Ultraviolet files so it is available when `UVServiceWorker` initialises:
+
+```js
+// public/purple/sw.js
+importScripts('../epoxy/index.js');
+importScripts('uv.bundle.js');
+importScripts('uv.config.js');
+importScripts(__uv$config.sw || 'uv.sw.js');
+
+const sw = new UVServiceWorker();
+self.addEventListener('fetch', (event) => event.respondWith(sw.fetch(event)));
+```
+
+## Switching transports
+
+To use a different transport you need to make three coordinated changes:
+
+<Steps>
+  <Step title="Update register-sw.js">
+    Replace the `BareMux.SetTransport` call with the new transport's initialiser. This file runs on every page (`index.html` and `404.html`) and is responsible for telling bare-mux which transport to use at runtime.
+  </Step>
+  <Step title="Update public/purple/sw.js">
+    Replace (or add) the `importScripts` call at the top of the file so the transport bundle is available inside the service worker context.
+  </Step>
+  <Step title="Add a script tag to index.html and 404.html">
+    Add a `<script>` tag that loads the transport's client-side bundle so it is available before `register-sw.js` runs.
+  </Step>
+</Steps>
+
+The examples below show the default EpoxyTransport configuration alongside a Bare-Client configuration so you can see exactly what needs to change in each file.
+
+<CodeGroup>
+  ```js register-sw.js (EpoxyTransport — default)
+  async function registerSW() {
+    await navigator.serviceWorker.register(stockSW, {
+      scope: __uv$config.prefix,
+    });
+
+    // Encrypted Wisp-based transport (default)
+    let wispUrl =
+      (location.protocol === "https:" ? "wss" : "ws") +
+      "://" +
+      location.host +
+      "/wisp/";
+    BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl });
+  }
+  ```
+
+  ```js register-sw.js (Bare-Client — legacy)
+  async function registerSW() {
+    await navigator.serviceWorker.register(stockSW, {
+      scope: __uv$config.prefix,
+    });
+
+    // Legacy unencrypted bare transport
+    BareMux.SetTransport("BareClient", {});
+  }
+  ```
+</CodeGroup>
+
+<CodeGroup>
+  ```js public/purple/sw.js (EpoxyTransport — default)
+  importScripts('../epoxy/index.js');
+  importScripts('uv.bundle.js');
+  importScripts('uv.config.js');
+  importScripts(__uv$config.sw || 'uv.sw.js');
+
+  const sw = new UVServiceWorker();
+  self.addEventListener('fetch', (event) => event.respondWith(sw.fetch(event)));
+  ```
+
+  ```js public/purple/sw.js (Bare-Client — legacy)
+  // Replace the epoxy importScripts line with the bare-client bundle
+  importScripts('/path/to/bare-client.js');
+  importScripts('uv.bundle.js');
+  importScripts('uv.config.js');
+  importScripts(__uv$config.sw || 'uv.sw.js');
+
+  const sw = new UVServiceWorker();
+  self.addEventListener('fetch', (event) => event.respondWith(sw.fetch(event)));
+  ```
+</CodeGroup>
+
+<Warning>
+  Bare-Client is the **legacy unencrypted** transport. Traffic proxied through
+  it is not protected in transit between the browser and the Selenite server.
+  Only use Bare-Client in environments where encryption is handled at another
+  layer (e.g. a TLS-terminating reverse proxy in front of Selenite) or for
+  local development purposes.
+</Warning>
+
+## Transport reference
+
+| Transport | Package / Source | Encrypted | Protocol |
+|---|---|---|---|
+| EpoxyTransport | `@mercuryworkshop/epoxy-transport` | ✅ Yes | Wisp over WebSocket |
+| CurlTransport | [MercuryWorkshop/CurlTransport](https://github.com/MercuryWorkshop/CurlTransport) | ✅ Yes | Custom |
+| Bare-Client | [MercuryWorkshop/Bare-as-module3](https://github.com/MercuryWorkshop/Bare-as-module3) | ❌ No | Bare HTTP |
+
+For full bare-mux API documentation and additional transport options, see the [bare-mux repository](https://github.com/MercuryWorkshop/bare-mux).

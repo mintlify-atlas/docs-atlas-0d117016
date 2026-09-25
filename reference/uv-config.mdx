@@ -1,0 +1,101 @@
+---
+title: "Ultraviolet Configuration Reference"
+sidebarTitle: "UV Config"
+description: "Every field in public/purple/uv.config.js explained — prefix, XOR codec, handler, client, bundle, config self-reference, and sw paths."
+---
+
+Selenite ships a custom `uv.config.js` at `public/purple/uv.config.js` that overwrites the stock file provided by the `@titaniumnetwork-dev/ultraviolet` npm package. The file assigns a single global object, `self.__uv$config`, that the Ultraviolet service worker reads at start-up to learn where every asset lives and how URLs should be encoded. Getting these paths and codec settings right is fundamental — a mismatch between the config and the actual file locations will cause the service worker to fail silently, breaking all proxied navigation.
+
+---
+
+## Complete file
+
+```js public/purple/uv.config.js
+// This file overwrites the stock UV config.js
+
+self.__uv$config = {
+  prefix: "/purple/service/",
+  encodeUrl: Ultraviolet.codec.xor.encode,
+  decodeUrl: Ultraviolet.codec.xor.decode,
+  handler: "/purple/uv.handler.js",
+  client: "/purple/uv.client.js",
+  bundle: "/purple/uv.bundle.js",
+  config: "/purple/uv.config.js",
+  sw: "/purple/uv.sw.js",
+};
+```
+
+---
+
+## Field reference
+
+<ParamField path="prefix" type="string" default='"/purple/service/"'>
+  The URL prefix under which all proxied pages are served. Every URL that the proxy navigates to is prefixed with this string after encoding. The service worker is registered with this value as its `scope`, so it only intercepts requests that begin with this prefix.
+
+  The value is also used directly in `public/index.js` when building the `src` for the proxy iframe:
+
+  ```js
+  frame.src = __uv$config.prefix + __uv$config.encodeUrl(url);
+  ```
+
+  Changing this prefix requires updating the service worker registration scope in `public/register-sw.js` to match, otherwise the service worker will be registered under the wrong scope and proxied requests will fall through to the network unmodified.
+</ParamField>
+
+<ParamField path="encodeUrl" type="function" default="Ultraviolet.codec.xor.encode">
+  The URL encoding function applied to every target URL before it is appended to `prefix`. Defaults to `Ultraviolet.codec.xor.encode`, which XOR-obfuscates the URL so it does not appear in plain text in the browser's address bar or in server access logs.
+
+  The XOR codec is not encryption — it is obfuscation. Anyone with access to the `decodeUrl` function can recover the original URL.
+</ParamField>
+
+<ParamField path="decodeUrl" type="function" default="Ultraviolet.codec.xor.decode">
+  The inverse of `encodeUrl`. The service worker uses `decodeUrl` to recover the original target URL from the encoded path before it makes the actual outbound request.
+
+  `encodeUrl` and `decodeUrl` must always be a matching pair from the same codec. Mixing codecs will cause every proxied request to resolve to a garbled URL.
+</ParamField>
+
+<ParamField path="handler" type="string" default='"/purple/uv.handler.js"'>
+  Absolute path to the UV request handler script. This script is imported by the UV service worker (`uv.sw.js`) and contains the core request-rewriting logic that transforms outbound requests and inbound responses so that relative URLs, cookies, and headers are rewritten to stay within the proxy prefix.
+</ParamField>
+
+<ParamField path="client" type="string" default='"/purple/uv.client.js"'>
+  Absolute path to the UV client-side script. This script is injected into every proxied page's document and rewrites JavaScript APIs (such as `fetch`, `XMLHttpRequest`, `WebSocket`, and `location`) so that pages continue to function correctly inside the proxy.
+</ParamField>
+
+<ParamField path="bundle" type="string" default='"/purple/uv.bundle.js"'>
+  Absolute path to the UV bundled script. This is imported at the top of `public/purple/sw.js` via `importScripts('uv.bundle.js')` before the config is loaded. It provides the `UVServiceWorker` class and supporting utilities that the service worker file instantiates.
+</ParamField>
+
+<ParamField path="config" type="string" default='"/purple/uv.config.js"'>
+  Absolute path to this configuration file itself. The UV service worker (`uv.sw.js`) uses this path to re-import the config when needed. It must point to the overriding config in `public/purple/`, not the stock one shipped inside the npm package.
+</ParamField>
+
+<ParamField path="sw" type="string" default='"/purple/uv.sw.js"'>
+  Absolute path to the UV service worker script. `public/purple/sw.js` resolves this path at runtime:
+
+  ```js
+  importScripts(__uv$config.sw || 'uv.sw.js');
+  ```
+
+  If `__uv$config.sw` is falsy, it falls back to the bare filename `'uv.sw.js'`, which resolves relative to `sw.js` itself (i.e., `/purple/uv.sw.js`). The explicit path in the config makes the resolution unambiguous.
+</ParamField>
+
+---
+
+## Codec options
+
+Ultraviolet ships multiple built-in codecs. The default in Selenite is XOR:
+
+| Codec | Encode | Decode | Notes |
+|---|---|---|---|
+| XOR | `Ultraviolet.codec.xor.encode` | `Ultraviolet.codec.xor.decode` | Default. Obfuscates URLs in the address bar. |
+| Plain | `Ultraviolet.codec.plain.encode` | `Ultraviolet.codec.plain.decode` | No obfuscation — target URLs appear verbatim. |
+| Base64 | `Ultraviolet.codec.base64.encode` | `Ultraviolet.codec.base64.decode` | Base64-encodes the target URL. |
+
+<Warning>
+  Changing `prefix` or the codec pair (`encodeUrl`/`decodeUrl`) requires coordinated updates in at least two places:
+
+  1. **`public/register-sw.js`** — the service worker is registered with `scope: __uv$config.prefix`. If the prefix changes, any previously registered service worker will remain active under the old scope until the browser's service worker lifecycle expires it. Users may see stale behaviour or failed interceptions during the transition.
+  2. **Any bookmarked or cached proxy URLs** — encoded URLs embedded in links or browser history will become invalid because the prefix or encoding no longer matches.
+
+  After changing these values, instruct users to clear their service worker registration (DevTools → Application → Service Workers → Unregister) and hard-reload.
+</Warning>

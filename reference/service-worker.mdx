@@ -1,0 +1,196 @@
+---
+title: "Ultraviolet Service Worker Internals"
+sidebarTitle: "Service Worker"
+description: "How the Ultraviolet service worker is registered via registerSW(), how it intercepts proxied requests, and how user input is resolved to a proxy URL."
+---
+
+Selenite's proxy capability rests entirely on a browser service worker. When a user submits a URL or search query, `public/index.js` calls `registerSW()` (defined in `public/register-sw.js`) to ensure the worker is installed, then builds a proxy URL by combining the UV prefix with an encoded form of the target URL and assigns it to an iframe. From that point on, the service worker — not the server — handles every network request the proxied page makes. This page documents the registration flow, the worker's internal structure, the URL-resolution logic, and the error conditions that can prevent the worker from starting.
+
+---
+
+## Service worker file
+
+`public/purple/sw.js` is the entry point for the service worker process. It is intentionally minimal — it delegates all request-handling logic to the Ultraviolet library:
+
+```js public/purple/sw.js
+importScripts('../epoxy/index.js');
+importScripts('uv.bundle.js');
+importScripts('uv.config.js');
+importScripts(__uv$config.sw || 'uv.sw.js');
+
+const sw = new UVServiceWorker();
+
+self.addEventListener('fetch', (event) => event.respondWith(sw.fetch(event)));
+```
+
+The four `importScripts` calls run in order:
+
+1. **`../epoxy/index.js`** — loads EpoxyTransport (from `/epoxy/index.js`) so the service worker can make outbound requests over the Wisp WebSocket tunnel.
+2. **`uv.bundle.js`** — loads the Ultraviolet bundle, which provides `UVServiceWorker` and related classes.
+3. **`uv.config.js`** — loads the Selenite config overlay (from `/purple/uv.config.js`), populating `self.__uv$config`.
+4. **`__uv$config.sw || 'uv.sw.js'`** — loads the UV service worker logic. The fallback `'uv.sw.js'` resolves relative to `sw.js` itself, which is also `/purple/uv.sw.js`.
+
+`UVServiceWorker` is then instantiated and wired to the global `fetch` event. Every request that falls within the service worker's scope is intercepted and passed to `sw.fetch(event)`, which decodes the proxy URL, rewrites headers, and tunnels the request through EpoxyTransport.
+
+<Note>
+  The service worker is registered with `scope: __uv$config.prefix` (i.e. `/purple/service/`). Only requests whose URLs begin with that prefix are intercepted. Requests to the Selenite UI itself, to `/api/`, to `/check`, and to vendor asset paths (`/purple/`, `/epoxy/`, `/baremux/`) are **not** intercepted by the service worker — they go directly to the Express server.
+</Note>
+
+---
+
+## Registration flow
+
+`public/register-sw.js` exports a single async function, `registerSW()`, which is called from `public/index.js` on every form submission:
+
+```js public/register-sw.js
+"use strict";
+
+const stockSW = "/purple/sw.js";
+
+/**
+ * List of hostnames that are allowed to run serviceworkers on http://
+ */
+const swAllowedHostnames = ["localhost", "127.0.0.1"];
+
+async function registerSW() {
+  if (!navigator.serviceWorker) {
+    if (
+      location.protocol !== "https:" &&
+      !swAllowedHostnames.includes(location.hostname)
+    )
+      throw new Error("Service workers cannot be registered without https.");
+
+    throw new Error("Your browser doesn't support service workers.");
+  }
+
+  await navigator.serviceWorker.register(stockSW, {
+    scope: __uv$config.prefix,
+  });
+
+  // Register the EpoxyClient transport to be used for network requests
+  let wispUrl =
+    (location.protocol === "https:" ? "wss" : "ws") +
+    "://" +
+    location.host +
+    "/wisp/";
+  BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl });
+}
+```
+
+<Steps>
+  <Step title="Guard: service worker API available?">
+    `registerSW()` checks `navigator.serviceWorker` first. If it is `undefined`, one of two errors is thrown:
+
+    - If the page is served over plain `http://` from a hostname that is **not** in `swAllowedHostnames` (`["localhost", "127.0.0.1"]`): `"Service workers cannot be registered without https."`
+    - Otherwise (the browser itself does not support service workers): `"Your browser doesn't support service workers."`
+
+    The `swAllowedHostnames` list exists so that developers can test Selenite locally over `http://` without needing TLS.
+  </Step>
+  <Step title="Register the service worker">
+    `navigator.serviceWorker.register("/purple/sw.js", { scope: __uv$config.prefix })` installs the worker from `stockSW` (`/purple/sw.js`) and limits its scope to the UV prefix (`/purple/service/`). If the worker is already registered, the browser reuses the existing registration without re-downloading the script.
+  </Step>
+  <Step title="Set the Wisp transport">
+    After registration, `BareMux.SetTransport("EpxMod.EpoxyClient", { wisp: wispUrl })` configures bare-mux to route all proxy network requests through EpoxyTransport. The Wisp URL is built dynamically:
+
+    ```js
+    let wispUrl =
+      (location.protocol === "https:" ? "wss" : "ws") +
+      "://" +
+      location.host +
+      "/wisp/";
+    ```
+
+    This means the Wisp endpoint is always on the same origin as Selenite — `wss://yourdomain.com/wisp/` in production, or `ws://localhost:8080/wisp/` in development.
+  </Step>
+</Steps>
+
+---
+
+## URL resolution — `search()`
+
+Before the proxy URL can be built, the raw user input (which may be a URL, a partial URL, or a plain search query) must be resolved to a fully-qualified URL. This is handled by `search()` in `public/search.js`:
+
+```js public/search.js
+"use strict";
+
+function search(input, template) {
+  try {
+    // input is a valid URL:
+    // eg: https://example.com, https://example.com/test?q=param
+    return new URL(input).toString();
+  } catch (err) {
+    // input was not a valid URL
+  }
+
+  try {
+    // input is a valid URL when http:// is added to the start:
+    // eg: example.com, example.com/test?q=param
+    const url = new URL(`http://${input}`);
+    // only if the hostname has a TLD/subdomain
+    if (url.hostname.includes(".")) return url.toString();
+  } catch (err) {
+    // input was not a valid URL
+  }
+
+  // Treat the input as a search query
+  return template.replace("%s", encodeURIComponent(input));
+}
+```
+
+The function tries three strategies in order:
+
+<Steps>
+  <Step title="Parse as a URL directly">
+    `new URL(input)` — if this succeeds, the input is already a valid absolute URL and is returned as-is. Handles inputs like `https://example.com` or `https://example.com/path?q=1`.
+  </Step>
+  <Step title="Prepend http:// and re-parse">
+    `new URL("http://" + input)` — if this succeeds **and** the resulting hostname contains a `.` (i.e. has a TLD or subdomain), the URL is returned. Handles bare domains like `example.com` or `example.com/path`. The `.` check prevents single-word inputs like `google` from being treated as hostnames.
+  </Step>
+  <Step title="Fall back to the search engine template">
+    If both URL attempts fail, the input is treated as a search query. It is `encodeURIComponent`-escaped and substituted into `template` where `%s` appears. The template comes from the `#uv-search-engine` input on the page (e.g. `https://www.google.com/search?q=%s`).
+  </Step>
+</Steps>
+
+---
+
+## Building and loading the proxy URL
+
+Once `search()` returns a resolved URL, `public/index.js` constructs the proxy address and loads it into the `#uv-frame` iframe:
+
+```js public/index.js (excerpt)
+const url = search(address.value, searchEngine.value);
+
+let frame = document.getElementById("uv-frame");
+frame.style.display = "block";
+frame.src = __uv$config.prefix + __uv$config.encodeUrl(url);
+```
+
+The final `src` looks like:
+
+```
+/purple/service/<xor-encoded-target-url>
+```
+
+Because the service worker's scope is `/purple/service/`, the browser intercepts the iframe's navigation request and passes it to `sw.fetch(event)`. The service worker decodes the URL using `__uv$config.decodeUrl`, rewrites the request, forwards it through EpoxyTransport over the Wisp WebSocket, and streams the response back to the iframe.
+
+---
+
+## Error handling
+
+If `registerSW()` throws, `public/index.js` catches the error and surfaces it to the user:
+
+```js
+try {
+  await registerSW();
+} catch (err) {
+  error.textContent = "Failed to register service worker.";
+  errorCode.textContent = err.toString();
+  throw err;
+}
+```
+
+The `#uv-error` paragraph shows a human-readable message and `#uv-error-code` shows the raw error string (e.g. `"Error: Service workers cannot be registered without https."`).
+
+<Warning>
+  Service workers require either HTTPS or a loopback origin (`localhost` / `127.0.0.1`). Deploying Selenite at a public IP or custom domain over plain HTTP will cause `registerSW()` to throw and the proxy to be completely non-functional. Always deploy with TLS in production.
+</Warning>

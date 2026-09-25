@@ -1,0 +1,186 @@
+---
+title: "Selenite REST API Reference"
+sidebarTitle: "REST API"
+description: "Complete reference for the two HTTP management endpoints, static asset routes, and the Wisp WebSocket endpoint exposed by the Selenite proxy server."
+---
+
+Selenite's Express server exposes two REST endpoints for managing domain access — `POST /api/addLink` for writing new domain→password entries, and `GET /check` for querying whether a domain is already in the allow-list — plus several static and infrastructure routes that serve Ultraviolet assets and the Wisp WebSocket tunnel. All REST endpoints accept and return JSON; authentication is enforced via an `auth` field in the request body compared against the `ADD_LINK_PASS` environment variable.
+
+---
+
+## REST Endpoints
+
+### POST /api/addLink
+
+Adds or updates a domain→password entry in `src/api/some.pass`. The password file is a JSON object keyed by domain name; changes take effect immediately because both `addPass.cjs` and `verify.cjs` watch the file with `fs.watch` and reload it on every write.
+
+**Authentication:** the `auth` field in the request body must equal the `ADD_LINK_PASS` environment variable. This check is performed by `canAddLink(req)` in `src/api/verify.cjs`. If the field is absent or does not match, the server responds with `401` before the file is touched.
+
+#### Request body
+
+<ParamField body="link" type="string" required>
+  The domain name (hostname) to add or overwrite. This becomes the key in `some.pass`, and it is also the value that `/check` and `checkPass` look up against `req.hostname`.
+
+  Example: `"yourdomain.com"`
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The password users on that domain must enter. Stored in plain text inside `some.pass` and compared against the `password` cookie by `isPassValid()` in `verify.cjs`.
+
+  Example: `"hunter2"`
+</ParamField>
+
+<ParamField body="auth" type="string" required>
+  The server-side administration secret. Must equal the value of the `ADD_LINK_PASS` environment variable. The comparison is performed with `==` (loose equality) in `canAddLink`.
+
+  Example: `"my-secret-admin-key"`
+</ParamField>
+
+#### Responses
+
+<ResponseField name="200 OK" type="number">
+  The domain→password pair was written to `some.pass` successfully. `addPass()` returns `200` after a successful `fs.writeFileSync` call.
+</ResponseField>
+
+<ResponseField name="401 Unauthorized" type="number">
+  The `auth` field was missing or did not match `ADD_LINK_PASS`. The file is not modified.
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="number">
+  `addPass()` caught an exception — typically a filesystem write failure. The file may be in an inconsistent state; check server logs.
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```bash curl
+curl -X POST https://yourdomain.com/api/addLink \
+  -H "Content-Type: application/json" \
+  -d '{
+    "link": "yourdomain.com",
+    "password": "hunter2",
+    "auth": "my-secret-admin-key"
+  }'
+```
+
+```json Request body
+{
+  "link": "yourdomain.com",
+  "password": "hunter2",
+  "auth": "my-secret-admin-key"
+}
+```
+
+```http Success response
+HTTP/1.1 200 OK
+```
+
+```http Auth failure
+HTTP/1.1 401 Unauthorized
+```
+
+</CodeGroup>
+
+---
+
+### GET /check
+
+Checks whether a domain is present in the `links` array — the set of keys currently loaded from `some.pass`. The array is populated at startup and then live-reloaded whenever `some.pass` changes on disk.
+
+<Note>
+  `/check` reads from the in-memory `links` array (an array of domain key strings), not from `passwords` (the full object). A domain that has been added via `/api/addLink` will appear in `/check` as soon as the `fs.watch` callback fires and re-parses the file — no server restart required.
+</Note>
+
+#### Query parameters
+
+<ParamField query="domain" type="string" required>
+  The hostname to look up. The check is a strict `Array.includes()` comparison, so the value must match the key in `some.pass` exactly (case-sensitive, no trailing slash).
+
+  Example: `?domain=yourdomain.com`
+</ParamField>
+
+#### Responses
+
+<ResponseField name="200 OK" type="number">
+  The domain string was found in `links`. The domain has an active entry in `some.pass`.
+</ResponseField>
+
+<ResponseField name="404 Not Found" type="number">
+  The domain string was not found in `links`. Either the domain has no entry in `some.pass`, or the file has not been loaded yet.
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```bash curl
+curl "https://yourdomain.com/check?domain=yourdomain.com"
+```
+
+```http Found
+HTTP/1.1 200 OK
+```
+
+```http Not found
+HTTP/1.1 404 Not Found
+```
+
+</CodeGroup>
+
+---
+
+## Password File
+
+Both `addPass.cjs` and `verify.cjs` operate on `src/api/some.pass`. This file is a plain JSON object mapping each registered domain to its password:
+
+```json some.pass
+{
+  "yourdomain.com": "hunter2",
+  "other.example.org": "s3cr3t"
+}
+```
+
+Both modules load the file asynchronously at startup and register an `fs.watch` listener so that any write (including those made by `/api/addLink`) triggers an immediate in-memory refresh. **No server restart is required when the file changes.**
+
+---
+
+## Infrastructure Routes
+
+The following routes are not REST APIs — they serve static assets and handle the WebSocket transport. They are registered in `src/index.js` after the REST routes and the password middleware.
+
+<CardGroup cols={2}>
+  <Card title="GET /purple/*" icon="folder-open">
+    Serves the Ultraviolet npm package assets from the `uvPath` directory exported by `@titaniumnetwork-dev/ultraviolet`. Includes `uv.bundle.js`, `uv.handler.js`, `uv.client.js`, `uv.sw.js`, and the server's own `uv.config.js` overlay.
+  </Card>
+  <Card title="GET /epoxy/*" icon="folder-open">
+    Serves EpoxyTransport assets from the `epoxyPath` directory exported by `@mercuryworkshop/epoxy-transport`. The service worker imports `../epoxy/index.js` at the start of `sw.js`.
+  </Card>
+  <Card title="GET /baremux/*" icon="folder-open">
+    Serves bare-mux assets from the `baremuxPath` directory exported by `@mercuryworkshop/bare-mux`. `BareMux.SetTransport` is called in `register-sw.js` after service worker registration.
+  </Card>
+  <Card title="WS /wisp/" icon="bolt">
+    WebSocket upgrade endpoint. When the HTTP server emits an `upgrade` event and the request URL ends with `/wisp/`, the connection is handed to `wisp.routeRequest()` from `wisp-server-node`. All other upgrade requests are closed immediately.
+  </Card>
+</CardGroup>
+
+### GET /purple/service/\*
+
+Proxied pages are served under the `/purple/service/` prefix. These requests are **not** handled by the Express router — the service worker intercepts them within the browser. The prefix is defined by `__uv$config.prefix` in `public/purple/uv.config.js` and is the scope to which the service worker is registered.
+
+<Tip>
+  To change the proxy prefix, update `prefix` in `public/purple/uv.config.js` and ensure the service worker registration in `register-sw.js` matches. See the [UV Config reference](/reference/uv-config) for details.
+</Tip>
+
+---
+
+## COOP / COEP Headers
+
+Every response — including static assets and REST endpoints — has the following security headers added by the `server.on("request", ...)` handler before Express sees the request:
+
+| Header | Value |
+|---|---|
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Cross-Origin-Embedder-Policy` | `require-corp` |
+
+These headers are required to enable `SharedArrayBuffer`, which some proxied sites depend on. See the [Architecture Overview](/reference/architecture) for more context.

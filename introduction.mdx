@@ -1,0 +1,82 @@
+---
+title: "Selenite: Self-Hosted Web Proxy Powered by Ultraviolet"
+sidebarTitle: "Introduction"
+description: "Selenite is a self-hosted web proxy powered by Ultraviolet and service workers, letting you bypass internet censorship inside your own infrastructure."
+---
+
+Selenite is a deployable, all-in-one web proxy built on top of [Ultraviolet](https://github.com/titaniumnetwork-dev/Ultraviolet) — a highly sophisticated proxying engine that intercepts browser requests inside a service worker, rewrites them through an encrypted transport layer, and returns fully functional web pages to the user. Because every component runs on infrastructure you control, Selenite gives teams and individuals a privacy-respecting, censorship-resistant gateway that no third-party service can throttle or shut down.
+
+## What is Selenite?
+
+Selenite packages the Ultraviolet proxy engine together with an Express-based Node.js server and a per-domain password system into a single repository you can clone and run in minutes. The server exposes your proxied pages at a regular URL while all routing, URL rewriting, and resource fetching happen silently inside a service worker — meaning the browser's address bar never reveals the real destination.
+
+Under the hood Selenite uses:
+
+- **`@titaniumnetwork-dev/ultraviolet`** — the core proxy engine (v3)
+- **`@mercuryworkshop/epoxy-transport`** — the default encrypted Wisp transport
+- **`@mercuryworkshop/bare-mux`** — the transport multiplexer that lets you switch between Epoxy, Curl, or legacy Bare transports without rebuilding
+- **`wisp-server-node`** — the WebSocket-based Wisp server that runs alongside Express
+- **`express`** + **`cookie-parser`** — the HTTP layer, static asset serving, and domain-scoped password verification
+
+The password file (`src/api/some.pass`) is a live-watched JSON map of domain names to passwords. Changes to it take effect immediately without restarting the server, and the `ADD_LINK_PASS` environment variable gates the `/api/addLink` endpoint that lets you add new domain–password pairs at runtime.
+
+## How It Works
+
+When a visitor opens Selenite in their browser, the following pipeline runs:
+
+1. **Service worker registration** — `public/register-sw.js` registers `/purple/sw.js` (the Ultraviolet service worker) scoped to the `/purple/service/` prefix.
+2. **Transport initialization** — `BareMux.SetTransport` configures the EpoxyClient to connect to the Wisp WebSocket endpoint at `wss://<host>/wisp/` (or `ws://` on plain HTTP).
+3. **URL encoding** — all destination URLs are XOR-encoded by `Ultraviolet.codec.xor.encode` before they appear in the path, keeping the real URL opaque to network observers.
+4. **Request interception** — the service worker catches every fetch event whose URL starts with `/purple/service/`, decodes the target URL, and forwards the request through the Wisp/Epoxy transport.
+5. **Response rewriting** — Ultraviolet rewrites HTML, CSS, and JavaScript on the fly so all embedded URLs are also routed through the proxy.
+6. **COOP/COEP headers** — the server sets `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on every response, enabling `SharedArrayBuffer` and high-resolution timers required by some proxied sites.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Service Worker Proxy" icon="shield-halved">
+    All proxying runs inside a browser service worker. No browser extension or native app is needed — the proxy is entirely server-and-web-based.
+  </Card>
+  <Card title="Encrypted Wisp Transport" icon="lock">
+    Requests travel over an encrypted WebSocket connection via EpoxyTransport, preventing plaintext inspection at the network level.
+  </Card>
+  <Card title="Per-Domain Password Auth" icon="key">
+    Access is controlled by a domain-scoped password file (`src/api/some.pass`) that is hot-reloaded on every file-system change without a server restart.
+  </Card>
+  <Card title="Switchable Transports" icon="arrows-rotate">
+    Swap between EpoxyTransport, CurlTransport, or the legacy Bare-Client by changing a single line in `public/register-sw.js` and updating `public/uv/sw.js`.
+  </Card>
+  <Card title="Graceful Shutdown" icon="circle-stop">
+    The server listens for `SIGINT` and `SIGTERM` and calls `server.close()` before exiting, ensuring in-flight requests are drained cleanly.
+  </Card>
+  <Card title="Multi-Platform Docker Builds" icon="docker">
+    The included GitHub Actions workflow builds and pushes a multi-arch image (`linux/amd64`, `linux/arm64`) to Docker Hub using `redhat-actions/buildah-build`.
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+Before installing Selenite, make sure your environment meets these requirements:
+
+| Requirement | Minimum version |
+|-------------|----------------|
+| Node.js     | `>= 16.0.0`    |
+| npm         | `>= 7.0.0`     |
+
+Any modern Linux, macOS, or Windows machine that satisfies those versions is supported. For production, a VPS or container runtime with outbound internet access is recommended.
+
+## Browser Support
+
+Selenite's service worker runs in any browser that supports the Service Worker API. For local development there is one important caveat:
+
+<Note>
+  Firefox requires a valid SSL certificate to register service workers on any hostname other than `localhost` or `127.0.0.1`. If you open Selenite over plain HTTP on a custom domain, Firefox will silently refuse to register the service worker and the proxy will not function. Use Chromium for localhost testing, and always provision a TLS certificate before exposing Selenite to Firefox users on a public domain.
+</Note>
+
+The allowed HTTP hostnames for service worker registration are `localhost` and `127.0.0.1`, enforced in `public/register-sw.js`:
+
+```javascript
+const swAllowedHostnames = ["localhost", "127.0.0.1"];
+```
+
+Any other hostname must be served over HTTPS.
